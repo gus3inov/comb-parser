@@ -1,5 +1,4 @@
-use std::ops::RangeFrom;
-use std::rc::Rc;
+use std::ops::Range;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Element {
@@ -149,33 +148,32 @@ fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
 where
     P: Parser<'a, A>,
 {
-    range(parser, 1..)
+    range(parser, 0..1)
 }
 
 fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
 where
     P: Parser<'a, A>,
 {
-    range(parser, 0..)
+    range(parser, 0..0)
 }
 
-fn range<'a, 'b, P, A>(parser: P, range_bound: RangeFrom<usize>) -> impl Parser<'a, Vec<A>>
+fn range<'a, P, A>(parser: P, range_bound: Range<usize>) -> impl Parser<'a, Vec<A>>
 where
     P: Parser<'a, A>,
 {
-    move |input: &'a str| {
+    let box_rb = Box::new(range_bound);
+    move |mut input: &'a str| {
         let mut result = Vec::new();
+        let rc_rb = box_rb.clone();
 
-        match input.get(*range_bound) {
-            Some(next) => {
-                if let Ok((next_input, first_item)) = parser.parse(next) {
-                    input = next_input;
-                    result.push(first_item);
-                } else {
-                    return Err(input);
-                }
+        for _ in *rc_rb {
+            if let Ok((next_input, first_item)) = parser.parse(input) {
+                input = next_input;
+                result.push(first_item);
+            } else {
+                return Err(input);
             }
-            _ => return Err(input),
         }
 
         while let Ok((next_input, next_item)) = parser.parse(input) {
@@ -205,6 +203,7 @@ fn one_or_more_combinator() {
 #[test]
 fn zero_or_more_combinator() {
     let parser = zero_or_more(build_parser("ha"));
+
     assert_eq!(
         Ok((
             "",
