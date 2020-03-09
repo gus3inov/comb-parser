@@ -11,16 +11,61 @@ struct Element {
 
 type ParseResult<'a, Output> = Result<(&'a str, Output), &'a str>;
 
-trait Parser<'a, Output> {
-    fn parse(&self, input: &'a str) -> ParseResult<'a, Output>;
-}
-
 impl<'a, F, Output> Parser<'a, Output> for F
 where
     F: Fn(&'a str) -> ParseResult<Output>,
 {
     fn parse(&self, input: &'a str) -> ParseResult<'a, Output> {
         self(input)
+    }
+}
+
+enum List<A> {
+    Cons(A, Box<List<A>>),
+    Nil,
+}
+
+struct BoxedParser<'a, Output> {
+    parser: Box<dyn Parser<'a, Output> + 'a>,
+}
+
+impl<'a, Output> BoxedParser<'a, Output> {
+    fn new<P>(parser: P) -> Self
+    where
+        P: Parser<'a, Output> + 'a,
+    {
+        BoxedParser {
+            parser: Box::new(parser),
+        }
+    }
+}
+
+impl<'a, Output> Parser<'a, Output> for BoxedParser<'a, Output> {
+    fn parse(&self, input: &'a str) -> ParseResult<'a, Output> {
+        self.parser.parse(input)
+    }
+}
+
+trait Parser<'a, Output> {
+    fn parse(&self, input: &'a str) -> ParseResult<'a, Output>;
+
+    fn map<F, NewOutput>(self, map_fn: F) -> BoxedParser<'a, NewOutput>
+    where
+        Self: Sized + 'a,
+        Output: 'a,
+        NewOutput: 'a,
+        F: Fn(Output) -> NewOutput + 'a,
+    {
+        BoxedParser::new(map(self, map_fn))
+    }
+
+    fn pred<F>(self, pref_fn: F) -> BoxedParser<'a, Output>
+    where
+        Self: Sized + 'a,
+        Output: 'a,
+        F: Fn(&Output) -> bool + 'a,
+    {
+        BoxedParser::new(pred(self, pref_fn))
     }
 }
 
@@ -260,16 +305,14 @@ fn space0<'a>() -> impl Parser<'a, Vec<char>> {
 }
 
 fn quoted_string<'a>() -> impl Parser<'a, String> {
-    map(
-        right(
+    right(
+        build_parser("\""),
+        left(
+            zero_or_more(any_char.pred(|c| *c != '"')),
             build_parser("\""),
-            left(
-                zero_or_more(pred(any_char, |c| *c != '"')),
-                build_parser("\""),
-            ),
         ),
-        |chars| chars.into_iter().collect(),
     )
+    .map(|chars| chars.into_iter().collect())
 }
 
 #[test]
@@ -307,14 +350,11 @@ fn element_start<'a>() -> impl Parser<'a, (String, Vec<(String, String)>)> {
 }
 
 fn single_element<'a>() -> impl Parser<'a, Element> {
-    map(
-        left(element_start(), build_parser("/>")),
-        |(name, attributes)| Element {
-            name,
-            attributes,
-            children: vec![],
-        },
-    )
+    left(element_start(), build_parser("/>")).map(|(name, attributes)| Element {
+        name,
+        attributes,
+        children: vec![],
+    })
 }
 
 #[test]
