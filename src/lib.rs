@@ -1,5 +1,3 @@
-#![type_length_limit = "16777216"]
-
 use std::ops::Range;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
