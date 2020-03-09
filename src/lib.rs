@@ -1,3 +1,5 @@
+#![type_length_limit = "16777216"]
+
 use std::ops::Range;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,20 +146,6 @@ where
     map(pair(parser1, parser2), |(_left, right)| right)
 }
 
-fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
-where
-    P: Parser<'a, A>,
-{
-    range(parser, 0..1)
-}
-
-fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
-where
-    P: Parser<'a, A>,
-{
-    range(parser, 0..0)
-}
-
 fn range<'a, P, A>(parser: P, range_bound: Range<usize>) -> impl Parser<'a, Vec<A>>
 where
     P: Parser<'a, A>,
@@ -185,6 +173,12 @@ where
     }
 }
 
+fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+where
+    P: Parser<'a, A>,
+{
+    range(parser, 0..1)
+}
 #[test]
 fn one_or_more_combinator() {
     let parser = one_or_more(build_parser("ha"));
@@ -200,6 +194,13 @@ fn one_or_more_combinator() {
     assert_eq!(Err(""), parser.parse(""));
 }
 
+fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+where
+    P: Parser<'a, A>,
+{
+    range(parser, 0..0)
+}
+
 #[test]
 fn zero_or_more_combinator() {
     let parser = zero_or_more(build_parser("ha"));
@@ -213,4 +214,90 @@ fn zero_or_more_combinator() {
     );
     assert_eq!(Ok(("ahah", vec![])), parser.parse("ahah"));
     assert_eq!(Ok(("", vec![])), parser.parse(""));
+}
+
+fn any_char(input: &str) -> ParseResult<char> {
+    match input.chars().next() {
+        Some(next) => Ok((&input[next.len_utf8()..], next)),
+        _ => Err(input),
+    }
+}
+
+fn pred<'a, P, A, F>(parser: P, predicate: F) -> impl Parser<'a, A>
+where
+    P: Parser<'a, A>,
+    F: Fn(&A) -> bool,
+{
+    move |input| {
+        if let Ok((next_input, value)) = parser.parse(input) {
+            if predicate(&value) {
+                return Ok((next_input, value));
+            }
+        }
+
+        Err(input)
+    }
+}
+
+#[test]
+fn predicate_combinator() {
+    let parser = pred(any_char, |c| *c == 'o');
+
+    assert_eq!(Ok(("mg", 'o')), parser.parse("omg"));
+    assert_eq!(Err("lol"), parser.parse("lol"));
+}
+
+fn whitespace_char<'a>() -> impl Parser<'a, char> {
+    pred(any_char, |c| c.is_whitespace())
+}
+
+fn space1<'a>() -> impl Parser<'a, Vec<char>> {
+    one_or_more(whitespace_char())
+}
+
+fn space0<'a>() -> impl Parser<'a, Vec<char>> {
+    zero_or_more(whitespace_char())
+}
+
+fn quoted_string<'a>() -> impl Parser<'a, String> {
+    map(
+        right(
+            build_parser("\""),
+            left(
+                zero_or_more(pred(any_char, |c| *c != '"')),
+                build_parser("\""),
+            ),
+        ),
+        |chars| chars.into_iter().collect(),
+    )
+}
+
+#[test]
+fn quoted_string_parser() {
+    assert_eq!(
+        Ok(("", "Hello, Joe!".to_string())),
+        quoted_string().parse("\"Hello, Joe!\"")
+    )
+}
+
+fn attribute_pair<'a>() -> impl Parser<'a, (String, String)> {
+    pair(parse_identifier, right(build_parser("="), quoted_string()))
+}
+
+fn attributes<'a>() -> impl Parser<'a, Vec<(String, String)>> {
+    zero_or_more(right(space1(), attribute_pair()))
+}
+
+#[test]
+fn attribute_parser() {
+    assert_eq!(
+        Ok((
+            "",
+            vec![
+                ("one".to_string(), "1".to_string()),
+                ("two".to_string(), "2".to_string())
+            ]
+        )),
+        attributes().parse(" one=\"1\" two=\"2\"")
+    );
 }
