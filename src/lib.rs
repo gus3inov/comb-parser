@@ -65,6 +65,17 @@ trait Parser<'a, Output> {
     {
         BoxedParser::new(pred(self, pref_fn))
     }
+
+    fn and_then<F, NextParser, NewOutput>(self, f: F) -> BoxedParser<'a, NewOutput>
+    where
+        Self: Sized + 'a,
+        Output: 'a,
+        NewOutput: 'a,
+        NextParser: Parser<'a, NewOutput> + 'a,
+        F: Fn(Output) -> NextParser + 'a,
+    {
+        BoxedParser::new(and_then(self, f))
+    }
 }
 
 #[allow(dead_code)]
@@ -72,6 +83,18 @@ fn build_parser<'a>(expected: &'static str) -> impl Parser<'a, String> {
     move |input: &'a str| match input.get(0..expected.len()) {
         Some(next) if next == expected => Ok((&input[expected.len()..], next.to_string())),
         _ => Err(input),
+    }
+}
+
+fn and_then<'a, P, F, A, B, NextP>(parser: P, f: F) -> impl Parser<'a, B>
+where
+    P: Parser<'a, A>,
+    NextP: Parser<'a, B>,
+    F: Fn(A) -> NextP,
+{
+    move |input| match parser.parse(input) {
+        Ok((next_input, result)) => f(result).parse(next_input),
+        Err(err) => Err(err),
     }
 }
 
@@ -141,7 +164,7 @@ where
         parser1.parse(input).and_then(|(next_input, result1)| {
             parser2
                 .parse(next_input)
-                .map(move |(final_input, result2)| (final_input, (result1, result2)))
+                .map(|(last_input, result2)| (last_input, (result1, result2)))
         })
     }
 }
@@ -369,3 +392,38 @@ fn single_element_parser() {
         single_element().parse("<div class=\"float\"/>")
     );
 }
+
+fn open_element<'a>() -> impl Parser<'a, Element> {
+    left(element_start(), build_parser(">")).map(|(name, attributes)| Element {
+        name,
+        attributes,
+        children: vec![],
+    })
+}
+
+fn either<'a, P1, P2, A>(parser1: P1, parser2: P2) -> impl Parser<'a, A>
+where
+    P1: Parser<'a, A>,
+    P2: Parser<'a, A>,
+{
+    move |input| match parser1.parse(input) {
+        ok @ Ok(_) => ok,
+        Err(_) => parser2.parse(input),
+    }
+}
+
+fn element<'a>() -> impl Parser<'a, Element> {
+    either(single_element(), open_element())
+}
+
+fn close_element<'a>(expected_name: String) -> impl Parser<'a, String> {
+    right(
+        build_parser("</"),
+        left(parse_identifier, build_parser(">")),
+    )
+    .pred(move |name| name == &expected_name)
+}
+
+// fn parent_element<'a>() -> impl Parser<'a, Element> {
+//     pair(open_element(), left(zero_or_more(element()), close_element(...oops)))
+// }
